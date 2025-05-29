@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>은퇴 가능 나이 계산기</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      padding: 20px;
+      max-width: 600px;
+      margin: auto;
+    }
+    label {
+      display: block;
+      margin-top: 20px;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin-top: 5px;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+    .helper {
+      font-size: 0.9rem;
+      color: gray;
+      margin-top: 3px;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px;
+      font-size: 1rem;
+      width: 100%;
+    }
+    .result {
+      margin-top: 30px;
+      padding: 15px;
+      background: #f4f4f4;
+      border-radius: 5px;
+    }
+    canvas {
+      margin-top: 20px;
+      width: 100% !important;
+      height: auto !important;
+    }
+    #history {
+      margin-top: 30px;
+    }
+    .history-entry {
+      padding: 8px;
+      margin-bottom: 5px;
+      background: #e8e8e8;
+      border-radius: 4px;
+      cursor: pointer;
+      position: relative;
+    }
+    .history-entry:hover {
+      background: #d0d0d0;
+    }
+    .delete-btn {
+      position: absolute;
+      right: 10px;
+      top: 5px;
+      color: red;
+      cursor: pointer;
+    }
+    .clear-all {
+      margin-top: 10px;
+      background-color: #ffdddd;
+      color: red;
+      font-weight: bold;
+    }
+    @media (max-width: 600px) {
+      body {
+        padding: 15px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h2>은퇴 가능 나이 계산기</h2>
+
+  <label>현재 나이
+    <input type="number" id="age" step="0.1" oninput="showPercent(this, 'h_age', false)">
+    <div class="helper" id="h_age"></div>
+  </label>
+
+  <label>예상 연수익률 (%)
+    <input type="number" id="r" step="0.01" oninput="showPercent(this, 'h_r')">
+    <div class="helper" id="h_r"></div>
+  </label>
+
+  <label>현재 자산 (₩)
+    <input type="number" id="P" oninput="showKorean(this, 'h_P')">
+    <div class="helper" id="h_P"></div>
+  </label>
+
+  <label>월 납입금 (₩)
+    <input type="number" id="C" oninput="showKorean(this, 'h_C')">
+    <div class="helper" id="h_C"></div>
+  </label>
+
+  <label>납입금 연 증가율 (%)
+    <input type="number" id="g" step="0.01" oninput="showPercent(this, 'h_g')">
+    <div class="helper" id="h_g"></div>
+  </label>
+
+  <label>은퇴 후 월 필요생활비 (₩)
+    <input type="number" id="E" oninput="showKorean(this, 'h_E')">
+    <div class="helper" id="h_E"></div>
+  </label>
+
+  <label>물가상승률 (%)
+    <input type="number" id="i" step="0.01" oninput="showPercent(this, 'h_i')">
+    <div class="helper" id="h_i"></div>
+  </label>
+
+  <button onclick="calcRetire()">계산하기</button>
+  <button onclick="downloadImage()">🖼️ 이미지로 저장</button>
+
+  <div id="outputContainer">
+    <div id="inputSummary"></div>
+    <div class="result" id="output"></div>
+    <canvas id="retireChart"></canvas>
+  </div>
+
+  <div id="history">
+    <h3>📜 저장된 결과 목록</h3>
+    <div id="historyList"></div>
+    <button class="clear-all" onclick="clearAllHistory()">📛 전체 삭제</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script>
+    const fields = ['age', 'r', 'P', 'C', 'g', 'E', 'i'];
+    const defaults = {
+      age: 30, r: 10, P: 100000000, C: 2000000,
+      g: 5, E: 5000000, i: 3
+    };
+
+    function showKorean(input, targetId) {
+      const num = parseFloat(input.value);
+      document.getElementById(targetId).innerText = isNaN(num) ? "" : numberToKorean(num) + " 원";
+    }
+
+    function showPercent(input, targetId, appendPercent = true) {
+      const num = parseFloat(input.value);
+      document.getElementById(targetId).innerText = isNaN(num) ? "" : appendPercent ? `${num}%` : `${num}세`;
+    }
+
+    function numberToKorean(num) {
+      const units = ["", "만", "억", "조", "경"];
+      let result = "", unitPos = 0;
+      while (num > 0) {
+        let part = num % 10000;
+        if (part > 0) result = part.toLocaleString() + units[unitPos] + " " + result;
+        num = Math.floor(num / 10000);
+        unitPos++;
+      }
+      return result.trim();
+    }
+
+    function calcRetire() {
+      let values = {};
+      fields.forEach(f => {
+        values[f] = parseFloat(document.getElementById(f).value);
+        localStorage.setItem(f, values[f]);
+      });
+
+      const summary = `
+        <h3>📋 입력 요약</h3>
+        <ul>
+          <li>현재 나이: ${values.age}세</li>
+          <li>예상 수익률: ${values.r}%</li>
+          <li>현재 자산: ${values.P.toLocaleString()}₩</li>
+          <li>월 납입금: ${values.C.toLocaleString()}₩</li>
+          <li>납입금 증가율: ${values.g}%</li>
+          <li>월 필요 생활비: ${values.E.toLocaleString()}₩</li>
+          <li>물가상승률: ${values.i}%</li>
+        </ul>`;
+      document.getElementById('inputSummary').innerHTML = summary;
+
+      let { age, r, P, C, g, E, i } = values;
+      let r_m = Math.pow(1 + r / 100, 1 / 12) - 1;
+      let g_m = Math.pow(1 + g / 100, 1 / 12) - 1;
+      let i_m = Math.pow(1 + i / 100, 1 / 12) - 1;
+      let real_r_m = (1 + r_m) / (1 + i_m) - 1;
+
+      let wealth = P, month = 0, maxM = 720;
+      let resultDiv = document.getElementById('output');
+      let wealthData = [], requiredData = [], labels = [];
+
+      let stopMonth = maxM;
+      let retireMonth = null;
+
+      while (month < maxM) {
+        wealth *= (1 + r_m);
+        wealth += C;
+        C *= (1 + g_m);
+        month++;
+
+        let E_adj = E * Math.pow(1 + i_m, month);
+        let required = E_adj / real_r_m;
+
+        wealthData.push(Math.round(wealth));
+        requiredData.push(Math.round(required));
+        labels.push((age + month / 12).toFixed(1) + '세');
+
+        if (wealth >= required && retireMonth === null) {
+          retireMonth = month;
+          stopMonth = Math.min(Math.floor(month * 1.1), maxM);
+        }
+
+        if (retireMonth !== null && month >= stopMonth) break;
+      }
+
+      if (retireMonth !== null) {
+        let y = Math.floor(age + retireMonth / 12);
+        let m = Math.round(((age + retireMonth / 12) - y) * 12);
+        let retireAge = `${y}세 ${m}개월`;
+        let html = `<h3>✅ 은퇴 가능 나이</h3><p>${retireAge}</p>
+          <p>자산: ${wealth.toLocaleString()}원<br>필요 자산: ${requiredData[retireMonth - 1].toLocaleString()}원</p>`;
+        resultDiv.innerHTML = html;
+        drawChart(labels, wealthData, requiredData);
+        saveResult({ html, timestamp: new Date().toLocaleString(), retireAge, wealth, required: requiredData[retireMonth - 1] });
+      } else {
+        resultDiv.innerHTML = `<p>⚠️ 은퇴 자산 도달 불가 (60년 기준)</p>`;
+        drawChart(labels, wealthData, requiredData);
+      }
+    }
+
+    function drawChart(labels, wealthData, requiredData) {
+      const ctx = document.getElementById('retireChart').getContext('2d');
+      if (window.retireChartInstance) window.retireChartInstance.destroy();
+
+      window.retireChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '누적 자산',
+              data: wealthData,
+              borderColor: 'green',
+              fill: false
+            },
+            {
+              label: '필요 자산',
+              data: requiredData,
+              borderColor: 'red',
+              borderDash: [5, 5],
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'top' } },
+          scales: {
+            y: {
+              ticks: {
+                callback: value => value.toLocaleString() + '₩'
+              }
+            }
+          }
+        }
+      });
+    }
+
+    async function downloadImage() {
+      const element = document.getElementById('outputContainer');
+      const canvas = await html2canvas(element);
+      const link = document.createElement('a');
+      link.download = '은퇴_계산결과.png';
+      link.href = canvas.toDataURL();
+      link.click();
+    }
+
+    function saveResult(entry) {
+      let history = JSON.parse(localStorage.getItem('retireHistory') || '[]');
+      history.push(entry);
+      localStorage.setItem('retireHistory', JSON.stringify(history));
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const list = document.getElementById('historyList');
+      const history = JSON.parse(localStorage.getItem('retireHistory') || '[]');
+      list.innerHTML = "";
+      history.reverse().forEach((entry, idx) => {
+        const div = document.createElement('div');
+        div.className = 'history-entry';
+        div.innerHTML = `${entry.timestamp} - 은퇴 가능 나이: ${entry.retireAge}, 자산: ${entry.wealth.toLocaleString()}원
+          <span class="delete-btn" onclick="deleteEntry(${history.length - 1 - idx})">🗑️</span>`;
+        div.onclick = (e) => {
+          if (!e.target.classList.contains('delete-btn')) {
+            document.getElementById('output').innerHTML = entry.html;
+          }
+        };
+        list.appendChild(div);
+      });
+    }
+
+    function deleteEntry(index) {
+      let history = JSON.parse(localStorage.getItem('retireHistory') || '[]');
+      history.splice(index, 1);
+      localStorage.setItem('retireHistory', JSON.stringify(history));
+      renderHistory();
+    }
+
+    function clearAllHistory() {
+      if (confirm("정말 모든 저장된 결과를 삭제하시겠습니까?")) {
+        localStorage.removeItem('retireHistory');
+        renderHistory();
+      }
+    }
+
+    window.onload = () => {
+      fields.forEach(f => {
+        const saved = localStorage.getItem(f);
+        const val = saved !== null ? saved : defaults[f];
+        document.getElementById(f).value = val;
+        if (['P','C','E'].includes(f)) showKorean({ value: val }, 'h_' + f);
+        else showPercent({ value: val }, 'h_' + f, f !== 'age');
+      });
+      renderHistory();
+    };
+  </script>
+</body>
+</html>
